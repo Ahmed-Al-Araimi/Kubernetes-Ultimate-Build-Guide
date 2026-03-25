@@ -1,0 +1,21 @@
+# Secrets and credentials
+nodes_creds.txt
+*.pem
+*.key
+*.crt
+*.p12
+*.kdbx
+
+# Local check reports and logs
+*.log
+*-report.txt
+wlb-check-report.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local backup from git metadata repair
+.git.broken-*

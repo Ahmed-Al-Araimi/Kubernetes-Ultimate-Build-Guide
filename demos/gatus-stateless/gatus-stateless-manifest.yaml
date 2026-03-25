@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gatus-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gatus-config
+  namespace: gatus-demo
+data:
+  config.yaml: |
+    metrics: true
+    endpoints:
+      - name: demo-web
+        url: http://demo-web.gatus-demo.svc.cluster.local
+        interval: 5s
+        conditions:
+          - "[STATUS] == 200"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatus
+  namespace: gatus-demo
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: gatus
+  template:
+    metadata:
+      labels:
+        app: gatus
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: gatus
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: gatus
+          image: ghcr.io/twin/gatus:stable
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config-file=/config/config.yaml
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: gatus-config
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gatus-pdb
+  namespace: gatus-demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: gatus
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gatus
+  namespace: gatus-demo
+spec:
+  type: NodePort
+  selector:
+    app: gatus
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-web
+  namespace: gatus-demo
+spec:
+  replicas: 3
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: demo-web
+  template:
+    metadata:
+      labels:
+        app: demo-web
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: demo-web
+      containers:
+        - name: whoami
+          image: traefik/whoami:v1.10.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-web-pdb
+  namespace: gatus-demo
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: demo-web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-web
+  namespace: gatus-demo
+spec:
+  selector:
+    app: demo-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
